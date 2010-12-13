@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE chapter SYSTEM "chapter.dtd">
+
+<chapter>
+  <header>
+    <copyright>
+      <year>2011</year><year>2011</year>
+      <holder>Ericsson AB. All Rights Reserved.</holder>
+    </copyright>
+    <legalnotice>
+      The contents of this file are subject to the Erlang Public License,
+      Version 1.1, (the "License"); you may not use this file except in
+      compliance with the License. You should have received a copy of the
+      Erlang Public License along with this software. If not, it can be
+      retrieved online at http://www.erlang.org/.
+
+      Software distributed under the License is distributed on an "AS IS"
+      basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See
+      the License for the specific language governing rights and limitations
+      under the License.
+
+    </legalnotice>
+
+    <title>Suite Callbacks</title>
+    <prepared>Lukas Larsson</prepared>
+    <docno></docno>
+    <date></date>
+    <rev></rev>
+    <file>suite_callbacks_chapter.xml</file>
+  </header>
+
+  <marker id="general"></marker>
+  <section>
+    <title>General</title>
+    <note><p>This feature is in alpha release right now. This means that the 
+    interface may change in the future and that there may be bugs. So
+    use at your own risk!</p></note>
+  </section>
+  
+  <marker id="installing"></marker>
+  <section>
+    <title>Installing an SCB</title>
+    <p>There are multiple ways to install an SCB in your test run. You can do it
+    for all tests in a run, for specific SUITEs and for specific groups within 
+    a SUITE. If you want an SCB to be present in all SUITEs within your 
+    testrun there are three different ways to accomplish that.</p>
+
+    <list>
+      <item>Add <c>-suite_callbacks</c> as an argument to 
+      <seealso marker="run_test_chapter#ct_run">ct_run</seealso>. 
+      To add multiple SCBs using this method append them to each other
+      using the keyword <c>and</c>, i.e. 
+      <c>ct_run -suite_callbacks scb1 [{debug,true}] and scb2 ...</c>.</item>
+      <item>Add the <c>suite_callbacks</c> tag to your 
+      <seealso marker="run_test_chapter#test_specifications">
+      Test Specification</seealso></item>
+      <item>Add the <c>suite_callbacks</c> tag to your call to 
+      <seealso marker="ct#run_test-1">ct:run_test/1</seealso></item>
+    </list>
+
+    <p>You can also add SCBs within a SUITE. This is done by returning
+    <c>{suite_callbacks,[SCB]}</c> in the config list from 
+    <seealso marker="common_test#Module:suite-0">suite/0</seealso>,
+    <seealso marker="common_test#Module:init_per_suite-1">
+      init_per_suite/1</seealso> or
+      <seealso marker="common_test#Module:init_per_group-2">
+    init_per_group/2</seealso>. <c>SCB</c> in this case can be either
+    only the module name of the SCB or a tuple with the module name and the
+    initial arguments to the SCB. Eg:
+    <c>{suite_callbacks,[my_scb_module]}</c> or 
+    <c>{suite_callbacks,[{my_scb_module,[{debug,true}]}]}</c></p>
+
+    <p>As SCBs can be added at different levels each SCB has to return a 
+    unique identifier in it's 
+    <seealso marker="ct_suite_callback#Module:init-2">init/2</seealso> 
+    function. When common_test comes across an SCB which returns the same
+    id as an already installed SCB it will ignore that SCB. This makes sure
+    that if you have installed an SCB within a 
+    <seealso marker="common_test#Module:suite-0">suite/0</seealso> 
+    function and also start <c>ct_run</c> with the same SCB. The SCB in question
+    is not installed twice, unless the author of the SCB wants it to.
+    </p> 
+  </section>
+
+  <marker id="scope"/>
+  <section>
+    <title>SCB Scope</title>
+    <p>Once the SCB is installed into a certain test run it will be there until
+    it's scope is expired. The scope of an SCB depends on when it is installed.
+    The <seealso marker="ct_suite_callback#Module:terminate-1">terminate/1
+    </seealso> function of an SCB is called when the scope ends.</p>
+    <table>
+      <row>
+	<cell><em>SCB Installed in</em></cell>
+	<cell><em>SCB Uninstalled after</em></cell>
+      </row>
+      <row>
+	<cell><seealso marker="run_test_chapter#ct_run">ct_run</seealso></cell>
+	<cell>the last SUITE has been run.</cell>
+      </row>
+      <row>
+	<cell><seealso marker="ct#run_test-1">ct:run_test</seealso></cell>
+	<cell>the last SUITE has been run.</cell>
+      </row>
+      <row>
+	<cell><seealso marker="run_test_chapter#test_specifications">
+	  Test Specification</seealso></cell>
+	<cell>the last SUITE has been run.</cell>
+      </row>
+      <row>
+	<cell><seealso marker="common_test#Module:suite-0">suite/0
+	</seealso></cell>
+	<cell><seealso marker="ct_suite_callback#Module:post_end_per_suite-4">
+	  post_end_per_suite/4</seealso> has been called for that SUITE.</cell>
+      </row>
+      <row>
+	<cell><seealso marker="common_test#Module:init_per_suite-1">
+	  init_per_suite/1</seealso></cell>
+	<cell><seealso marker="ct_suite_callback#Module:post_end_per_suite-4">
+	  post_end_per_suite/4</seealso> has been called for that SUITE.</cell>
+      </row>
+      <row>
+	<cell><seealso marker="common_test#Module:init_per_group-2">
+	  init_per_group/2</seealso></cell>
+	<cell><seealso marker="ct_suite_callback#Module:post_end_per_suite-4">
+	  post_end_per_group/4</seealso> has been called for that group.</cell>
+      </row>
+    <tcaption>Scope of an SCB</tcaption>
+    </table>
+  </section>
+
+  <marker id="manipulating"/>
+  <section>
+    <title>Manipulating tests</title>
+    <p>It is through SCB's possible to manipulate the results of tests and 
+    configuration functions. The main purpose of doing this with SCBs is to
+    allow common patterns to be abstracted out from test SUITEs and applied to
+    multiple test suites without duplicating any code. All of the callback
+    functions for an SCB follow a common interface, this interface is 
+    described below.</p>
+
+    <marker id="pre"/>
+    <section>
+      <title>Pre test manipulation</title>
+      <p>
+	It is possible in an SCB to hook in behaviour before 
+	<seealso marker="common_test#Module:init_per_suite-1">init_per_suite</seealso>, 
+	<seealso marker="common_test#Module:init_per_suite-1">init_per_group</seealso>, 
+	<seealso marker="common_test#Module:init_per_suite-1">init_per_testcase</seealso>, 
+	<seealso marker="common_test#Module:init_per_suite-1">end_per_group</seealso> and 
+	<seealso marker="common_test#Module:init_per_suite-1">end_per_suite</seealso>. 
+	This is done in the SCB functions called pre_&lt;name of function&gt;.
+	All of these function take the same three arguments: <c>Name</c>, 
+	<c>Config</c> and <c>SCBState</c> and can return the same things. 
+	The return value of the SCB function is always a combination of an
+	result for the suite/group/test and an updated <c>SCBState</c>. 
+	If you want the test suite to continue on executing you should return
+	the config list which you want the test to use as the result. 
+	If you for some reason want to skip/fail the test, return a tuple
+	with <c>skip</c> or <c>fail</c> and a reason as the result. Example:
+      </p>
+	<code>pre_init_per_suite(SuiteName, Config, SCBState) -&gt;
+  case db:connect() of
+    {error,_Reason} -&gt;
+      {{fail, "Could not connect to DB"}, SCBState};
+    {ok, Handle} -&gt;
+      {[{db_handle, Handle} | Config], SCBState#state{ handle = Handle }}
+  end.
+	</code>
+	
+    </section>
+    
+    <marker id="post"/>
+    <section>
+      <title>Post test manipulation</title>
+      <p>It is also possible in an SCB to hook in behaviour after 
+      <seealso marker="common_test#Module:init_per_suite-1">init_per_suite</seealso>, 
+      <seealso marker="common_test#Module:init_per_suite-1">init_per_group</seealso>, 
+      <seealso marker="common_test#Module:init_per_suite-1">end_per_testcase</seealso>, 
+      <seealso marker="common_test#Module:init_per_suite-1">end_per_group</seealso> and 
+      <seealso marker="common_test#Module:init_per_suite-1">end_per_suite</seealso>.
+      This is done in the SCB functions called post_&lt;name of function%gt;. </p>
+    </section>
+
+    <marker id="skip_n_fail"/>
+    <section>
+      <title>Skip and Fail</title>
+
+    </section>
+
+  </section>
+
+</chapter>
+
+
+
+
