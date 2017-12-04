@@ -1055,21 +1055,43 @@ group_or_func(Func, _Config) ->
 %%%      should be returned. 
 
 get_suite(Mod, all) ->
-    case catch apply(Mod, groups, []) of
-	{'EXIT',_} ->
-	    get_all(Mod, []);
-	GroupDefs when is_list(GroupDefs) ->
-	    case catch ct_groups:find_groups(Mod, all, all, GroupDefs) of
-		{error,_} = Error ->
-		    %% this makes test_server call error_in_suite as first
-		    %% (and only) test case so we can report Error properly
-		    [{?MODULE,error_in_suite,[[Error]]}];
-		ConfTests ->
-		    get_all(Mod, ConfTests)
-	    end;
-	_ ->
+    GroupDefs =
+        try apply(Mod, groups, []) of
+            GrDefs when is_list(GrDefs) -> GrDefs;
+            _Bad -> error
+        catch
+            _:_ -> []
+        end,
+    if GroupDefs == error ->
 	    E = "Bad return value from "++atom_to_list(Mod)++":groups/0",
-	    [{?MODULE,error_in_suite,[[{error,list_to_atom(E)}]]}]
+	    [{?MODULE,error_in_suite,[[{error,list_to_atom(E)}]]}];
+       true ->
+            HandleError = fun(Error) ->
+                                  Error1 = case Error of
+                                               {error,Reason} -> Reason;
+                                               {fail,Reason}  -> {error,Reason};
+                                               _ -> Error
+                                           end,
+                                  %% this makes test_server call error_in_suite
+                                  %% as first (and only) test case so we can
+                                  %% report the error properly
+                                  [{?MODULE,error_in_suite,[[Error1]]}]
+                          end,
+            try ct_hooks:groups(Mod, GroupDefs) of
+                GroupDefs1 when is_list(GroupDefs1) ->
+                    try ct_groups:find_groups(Mod, all, all, GroupDefs1) of
+                        ConfTests when is_list(ConfTests) ->
+                            get_all(Mod, ConfTests);
+                        Error ->
+                            HandleError(Error)
+                    catch
+                        _:Error -> HandleError(Error)
+                    end;
+                Error ->
+                    HandleError(Error)
+            catch
+                _:Error -> HandleError(Error)
+            end
     end;
 
 %%!============================================================
@@ -1080,53 +1102,64 @@ get_suite(Mod, all) ->
 %% group
 get_suite(Mod, Group={conf,Props,_Init,TCs,_End}) ->
     Name = ?val(name, Props),
-    case catch apply(Mod, groups, []) of
-	{'EXIT',_} ->
-	    [Group];
-	GroupDefs when is_list(GroupDefs) ->
-	    case catch ct_groups:find_groups(Mod, Name, TCs, GroupDefs) of
-		{error,_} = Error ->
-		    %% this makes test_server call error_in_suite as first
-		    %% (and only) test case so we can report Error properly
-		    [{?MODULE,error_in_suite,[[Error]]}];
-		[] ->
-		    [];
-		ConfTests ->
-		    case lists:member(skipped, Props) of
-			true ->
-			    %% a *subgroup* specified *only* as skipped (and not
-			    %% as an explicit test) should not be returned, or
-			    %% init/end functions for top groups will be executed
-			    case catch ?val(name, element(2, hd(ConfTests))) of
-				Name ->		% top group
-				    ct_groups:delete_subs(ConfTests, ConfTests);
-				_ ->
-				    []
-			    end;
-			false ->
-			    ConfTests1 = ct_groups:delete_subs(ConfTests,
-							       ConfTests),
-			    case ?val(override, Props) of
-				undefined ->
-				    ConfTests1;
-				[] ->
-				    ConfTests1;
-				ORSpec ->
-				    ORSpec1 = if is_tuple(ORSpec) -> [ORSpec];
-						 true -> ORSpec end,
-				    ct_groups:search_and_override(ConfTests1,
-								  ORSpec1, Mod)
-			    end
-		    end
-	    end;
-	_ ->
+    ConfTests = try apply(Mod, groups, []) of
+                    GroupDefs when is_list(GroupDefs) ->
+                        GroupDefs1 = ct_hooks:groups(Mod, GroupDefs),
+                        ct_groups:find_groups(Mod, Name, TCs, GroupDefs1);
+                    _Bad ->
+                        error
+                catch
+                    _:_ ->
+                        case ct_hooks:groups(Mod, []) of
+                            [] ->
+                                [Group];
+                            GroupDefs ->
+                                ct_groups:find_groups(Mod, Name, TCs, GroupDefs)
+                        end
+                end,
+    case ConfTests of
+        error ->
 	    E = "Bad return value from "++atom_to_list(Mod)++":groups/0",
-	    [{?MODULE,error_in_suite,[[{error,list_to_atom(E)}]]}]
+	    [{?MODULE,error_in_suite,[[{error,list_to_atom(E)}]]}];
+        {error,_} = Error ->
+            %% this makes test_server call error_in_suite as first
+            %% (and only) test case so we can report Error properly
+            [{?MODULE,error_in_suite,[[Error]]}];
+        [] ->
+            [];
+        _ ->
+            case lists:member(skipped, Props) of
+                true ->
+                    %% a *subgroup* specified *only* as skipped (and not
+                    %% as an explicit test) should not be returned, or
+                    %% init/end functions for top groups will be executed
+                    try ?val(name, element(2, hd(ConfTests))) of
+                        Name ->		% top group
+                            ct_groups:delete_subs(ConfTests, ConfTests);
+                        _ -> []
+                    catch
+                        _:_ -> []
+                    end;
+                false ->
+                    ConfTests1 = ct_groups:delete_subs(ConfTests,
+                                                       ConfTests),
+                    case ?val(override, Props) of
+                        undefined ->
+                            ConfTests1;
+                        [] ->
+                            ConfTests1;
+                        ORSpec ->
+                            ORSpec1 = if is_tuple(ORSpec) -> [ORSpec];
+                                         true -> ORSpec end,
+                            ct_groups:search_and_override(ConfTests1,
+                                                          ORSpec1, Mod)
+                    end
+            end
     end;
 
 %% testcase
 get_suite(Mod, Name) ->
-     get_seq(Mod, Name).
+    get_seq(Mod, Name).
 
 %%%-----------------------------------------------------------------
 
@@ -1160,21 +1193,44 @@ get_all_cases1(_, []) ->
 
 %%%-----------------------------------------------------------------
 
-get_all(Mod, ConfTests) ->	
-    case catch apply(Mod, all, []) of
-	{'EXIT',{undef,[{Mod,all,[],_} | _]}} ->
-	    Reason =
-		case code:which(Mod) of
-		    non_existing ->
-			list_to_atom(atom_to_list(Mod)++
-					 " can not be compiled or loaded");
-		    _ ->
-			list_to_atom(atom_to_list(Mod)++":all/0 is missing")
-		end,
-	    %% this makes test_server call error_in_suite as first
-	    %% (and only) test case so we can report Reason properly
-	    [{?MODULE,error_in_suite,[[{error,Reason}]]}];
-	{'EXIT',ExitReason} ->
+get_all(Mod, ConfTests) ->
+    try apply(Mod, all, []) of
+	AllTCs when is_list(AllTCs) ->
+	    case save_seqs(Mod,AllTCs) of
+		{error,What} ->
+		    [{?MODULE,error_in_suite,[[{error,What}]]}];
+		SeqsAndTCs ->
+                    finalize_groups(ct_hooks:all(Mod, SeqsAndTCs),
+                                    ConfTests, Mod)
+	    end;
+	Skip = {skip,_Reason} ->
+	    Skip;
+	_ ->
+	    Reason = 
+		list_to_atom("Bad return value from "++
+				 atom_to_list(Mod)++":all/0"),
+	    [{?MODULE,error_in_suite,[[{error,Reason}]]}]
+    catch
+	_:{undef,[{Mod,all,[],_} | _]} ->
+            case ct_hooks:all(Mod, []) of
+                [] ->
+                    Reason =
+                        case code:which(Mod) of
+                            non_existing ->
+                                list_to_atom(
+                                  atom_to_list(Mod)++
+                                      " can not be compiled or loaded");
+                            _ ->
+                                list_to_atom(
+                                  atom_to_list(Mod)++":all/0 is missing")
+                        end,
+                    %% this makes test_server call error_in_suite as first
+                    %% (and only) test case so we can report Reason properly
+                    [{?MODULE,error_in_suite,[[{error,Reason}]]}];
+                SeqsAndTCs ->
+                    finalize_groups(SeqsAndTCs, ConfTests, Mod)
+            end;
+        _:ExitReason ->
 	    case ct_util:get_testdata({error_in_suite,Mod}) of
 		undefined ->
 		    ErrStr = io_lib:format("~n*** ERROR *** "
@@ -1190,29 +1246,19 @@ get_all(Mod, ConfTests) ->
 	    Reason = list_to_atom(atom_to_list(Mod)++":all/0 failed"),
 	    %% this makes test_server call error_in_suite as first
 	    %% (and only) test case so we can report Reason properly
-	    [{?MODULE,error_in_suite,[[{error,Reason}]]}];
-	AllTCs when is_list(AllTCs) ->
-	    case catch save_seqs(Mod,AllTCs) of
-		{error,What} ->
-		    [{?MODULE,error_in_suite,[[{error,What}]]}];
-		SeqsAndTCs ->
-		    %% expand group references in all() using ConfTests
-		    case catch ct_groups:expand_groups(SeqsAndTCs,
-						       ConfTests,
-						       Mod) of
-			{error,_} = Error ->
-			    [{?MODULE,error_in_suite,[[Error]]}];
-			Tests ->
-			    ct_groups:delete_subs(Tests, Tests)
-		    end
-	    end;
-	Skip = {skip,_Reason} ->
-	    Skip;
-	_ ->
-	    Reason = 
-		list_to_atom("Bad return value from "++
-				 atom_to_list(Mod)++":all/0"),
 	    [{?MODULE,error_in_suite,[[{error,Reason}]]}]
+    end.
+
+finalize_groups(SeqsAndTCs, ConfTests, Mod) ->
+    %% expand group references in all() using ConfTests
+    try ct_groups:expand_groups(SeqsAndTCs, ConfTests, Mod) of
+        {error,_} = Error ->
+            [{?MODULE,error_in_suite,[[Error]]}];
+        Tests ->
+            ct_groups:delete_subs(Tests, Tests)
+    catch
+        _:Error ->
+            [{?MODULE,error_in_suite,[[Error]]}]
     end.
 
 %%!============================================================

@@ -78,7 +78,7 @@ prepare_tester_node(Node,Config) ->
 		      Ds -> Ds
 		  end,
     PathDirs = [WorkDir,TSDir | AddPathDirs],
-    [true = rpc:call(Node, code, add_patha, [D]) || D <- PathDirs],
+    [{true,D} = {rpc:call(Node, code, add_patha, [D]),D} || D <- PathDirs],
     io:format("Dirs added to code path (on ~w):~n",
 	      [Node]),
     [io:format("~ts~n", [D]) || D <- PathDirs],

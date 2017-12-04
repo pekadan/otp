@@ -1176,10 +1176,10 @@ init_tester(Mod, Func, Args, Dir, Name, {_,_,MinLev}=Levels,
 	{'EXIT',test_suites_done} ->
 	    ok;
 	{'EXIT',_Pid,Reason} ->
-	    print(1, "EXIT, reason ~tp", [Reason]);
+	    print(1, "EXIT, reason ~tp~n", [Reason]);
 	{'EXIT',Reason} ->
 	    report_severe_error(Reason),
-	    print(1, "EXIT, reason ~tp", [Reason])
+	    print(1, "EXIT, reason ~tp~n", [Reason])
     end,
     Time = TimeMy/1000000,
     SuccessStr =
@@ -4678,7 +4678,7 @@ collect_all_cases(Top, Skip) when is_list(Skip) ->
 	case collect_cases(Top, #cc{mod=[],skip=Skip}, []) of
 	    {ok,Cases,_St} -> Cases;
 	    Other          -> Other
-	end,
+	end,    
     Result.
 
 
